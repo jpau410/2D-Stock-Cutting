@@ -1,0 +1,5 @@
+item_id,value,width,height,thickness,material,finish,can_rotate,demand_period_1
+P-100,12.50,300,200,1.5,Steel,Brushed,yes,400
+P-101,8.00,150,400,1.5,Steel,Brushed,no,250
+P-102,3.20,100,100,1.5,Steel,Brushed,yes,1200
+P-200,21.00,450,320,2,Aluminium,,yes,180

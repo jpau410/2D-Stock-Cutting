@@ -1,0 +1,4 @@
+sheet_id,width,height,thickness,material,finish,quantity
+S-01,2500,1250,1.5,Steel,Brushed,12
+S-02,2000,1000,1.5,Steel,Brushed,30
+S-03,3000,1500,2,Aluminium,,8

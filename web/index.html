@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2D Stock Cutting</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">2D Stock Cutting</div>
+  <nav id="tabs" aria-label="Sections">
+    <button data-tab="data" class="active">1&nbsp;&nbsp;Data</button>
+    <button data-tab="settings">2&nbsp;&nbsp;Settings</button>
+    <button data-tab="run">3&nbsp;&nbsp;Run</button>
+    <button data-tab="results">4&nbsp;&nbsp;Results</button>
+  </nav>
+  <div id="server-status" class="server-status">Connecting&hellip;</div>
+</header>
+
+<main>
+
+<!-- ============================ DATA ============================ -->
+<section id="tab-data" class="tab">
+
+  <div class="panel">
+    <h2>File format</h2>
+    <div class="panel-body">
+      <p class="note">Two tables are needed: the <b>items</b> to cut and the <b>sheets</b> in stock. Upload them as CSV
+      files, or type them into the tables below. All sizes are in millimetres. Column headings are matched ignoring
+      capital letters; the columns can be in any order.</p>
+
+      <div class="format-grid">
+        <div>
+          <h3>Items file</h3>
+          <div id="example-items" class="example"></div>
+          <p class="small muted">Demand split into periods: add one column for each period.</p>
+          <div id="example-items-periods" class="example"></div>
+          <table class="grid columns-help">
+            <thead><tr><th>Column</th><th>Needed</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>item_id</code></td><td>yes</td><td>A name for the item. Each must be different.</td></tr>
+              <tr><td><code>value</code></td><td>yes</td><td>What one item is worth. This is what it costs to buy one in.</td></tr>
+              <tr><td><code>width</code>, <code>height</code></td><td>yes</td><td>Size of the item in mm.</td></tr>
+              <tr><td><code>thickness</code></td><td>no</td><td>Sheet thickness in mm. Items are only cut from sheets with the same thickness, material and finish.</td></tr>
+              <tr><td><code>material</code>, <code>finish</code></td><td>no</td><td>As above. Leave empty if there is only one.</td></tr>
+              <tr><td><code>can_rotate</code></td><td>yes</td><td><code>yes</code> if the item may be turned through 90&deg;, otherwise <code>no</code>.</td></tr>
+              <tr><td><code>demand_period_1</code>, <code>demand_period_2</code>, &hellip;</td><td>yes</td><td>How many of the item are needed in each period. With only <code>demand_period_1</code> filled in, that is the demand for a year, planned as one period.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Sheets file</h3>
+          <div id="example-sheets" class="example"></div>
+          <table class="grid columns-help">
+            <thead><tr><th>Column</th><th>Needed</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>sheet_id</code></td><td>yes</td><td>A name for the sheet size. Each must be different.</td></tr>
+              <tr><td><code>width</code>, <code>height</code></td><td>yes</td><td>Size of the sheet in mm.</td></tr>
+              <tr><td><code>thickness</code>, <code>material</code>, <code>finish</code></td><td>no</td><td>As for items. Sheets are grouped by these three, and each group is solved separately.</td></tr>
+              <tr><td><code>quantity</code></td><td>yes</td><td>How many sheets of this size are in stock.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="disclaimer">
+        <b>Rotation.</b> An item that cannot be rotated is placed with its width along the width of the sheet and its
+        height along the height of the sheet. This assumes the width and height of each sheet are given in the same
+        orientation as the items (for example, the same grain direction).
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-items">
+    <h2>Items</h2>
+    <div class="toolbar">
+      <button id="items-upload">Upload CSV&hellip;</button>
+      <a class="button" href="/web/templates/items_template.csv" download>Download template</a>
+      <button id="items-add">Add row</button>
+      <button id="items-clear">Clear table</button>
+      <span class="spacer"></span>
+      <span class="inline">Demand periods
+        <button id="periods-less" title="Remove the last period">&minus;</button>
+        <b id="periods-count">1</b>
+        <button id="periods-more" title="Add a period">+</button></span>
+      <input type="file" id="items-file" accept=".csv,text/csv" hidden>
+    </div>
+    <div class="table-wrap"><table class="grid editable" id="items-table"></table></div>
+    <div class="table-message" id="items-message"></div>
+  </div>
+
+  <div class="panel" id="panel-sheets">
+    <h2>Sheets</h2>
+    <div class="toolbar">
+      <button id="sheets-upload">Upload CSV&hellip;</button>
+      <a class="button" href="/web/templates/sheets_template.csv" download>Download template</a>
+      <button id="sheets-add">Add row</button>
+      <button id="sheets-clear">Clear table</button>
+      <input type="file" id="sheets-file" accept=".csv,text/csv" hidden>
+    </div>
+    <div class="table-wrap"><table class="grid editable" id="sheets-table"></table></div>
+    <div class="table-message" id="sheets-message"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Check</h2>
+    <div class="panel-body" id="check-result"><span class="muted">Add items and sheets to check them.</span></div>
+  </div>
+
+</section>
+
+<!-- ============================ SETTINGS ============================ -->
+<section id="tab-settings" class="tab" hidden>
+
+  <div class="panel">
+    <h2>What to run</h2>
+    <div class="panel-body form">
+      <label class="check"><input type="checkbox" data-setting="modes.stock"> <b>Cutting plan from the sheets in stock</b>
+        <span class="hint">Chooses which patterns to cut from the sheets in stock and how many times, and what to buy in.</span></label>
+      <label class="check indent"><input type="checkbox" data-setting="modes.min_month"> Months of cover
+        <span class="hint">Also works out how many months of each item's demand the stock covers when it is used for profit alone. Needs the cutting plan.</span></label>
+      <label class="check"><input type="checkbox" data-setting="modes.infinite"> <b>Infinite sheet</b>
+        <span class="hint">The length of roll that would meet a year's demand if material were unlimited. Set the roll below.</span></label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Clearance for the sheet stock</h2>
+    <div class="panel-body form">
+      <div class="row"><label>Gap between items (mm)</label><input type="number" min="0" step="any" data-setting="clearance.gap"></div>
+      <div class="row"><label>Margin at the left edge (mm)</label><input type="number" min="0" step="any" data-setting="clearance.left"></div>
+      <div class="row"><label>Margin at the right edge (mm)</label><input type="number" min="0" step="any" data-setting="clearance.right"></div>
+      <div class="row"><label>Margin at the top edge (mm)</label><input type="number" min="0" step="any" data-setting="clearance.top"></div>
+      <div class="row"><label>Margin at the bottom edge (mm)</label><input type="number" min="0" step="any" data-setting="clearance.bottom"></div>
+      <p class="note">A margin of 0 lets items sit flush with that edge. A margin above 0 keeps every item at least that far from the edge.
+      Items are placed exactly by these rules, and each drawing is checked against them.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Pattern generation</h2>
+    <div class="panel-body form">
+      <div class="row"><label>Method</label><div>Column generation with the three-staged dynamic programme <span class="muted">(main method)</span></div></div>
+      <label class="check"><input type="checkbox" data-setting="pool_preseed"> Seed the pattern pool first with dichotomic patterns
+        <span class="hint">Takes extra time and may give a marginally better plan.</span></label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Selection</h2>
+    <div class="panel-body form">
+      <p class="note">Buying in is the last resort. The plan uses the sheets to meet the demand, and buys in only what the
+      sheets cannot supply: when there are too few sheets, every sheet that can help is cut. When there are more sheets than
+      the demand needs, nothing is bought in, and the sheets cut are the ones that give up the least. Each sheet is valued
+      at its best packing, whatever the demand for the items on it, so the least valuable sheets are used and the most
+      valuable are saved. A sheet that can hold none of the items is saved.</p>
+      <div class="row"><label>Holding cost of items (% of value a year)</label><input type="number" min="0" step="any" data-setting="item_holding_rate" data-scale="100"></div>
+      <div class="row" id="row-periods-per-year"><label>Periods in a year</label><input type="number" min="1" step="any" data-setting="periods_per_year"></div>
+      <p class="note" id="holding-note">The holding cost of items is a yearly figure. Items in stock at the end of a period are charged that rate divided by the number of periods in a year, and so are items left at the end of the last period (one extra period).</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Limits</h2>
+    <div class="panel-body form">
+      <div class="row"><label>Column generation: most iterations</label><input type="number" min="1" step="1" data-setting="limits.max_iterations"></div>
+      <div class="row"><label>Column generation: time limit (seconds, empty for none)</label><input type="number" min="1" step="any" data-setting="limits.col_gen_time_limit"></div>
+      <div class="row"><label>Integer programme: time limit for each group (seconds)</label><input type="number" min="1" step="any" data-setting="limits.ip_time_limit"></div>
+      <p class="note">When the integer programme runs out of time, the best plan found so far is kept.</p>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-roll" hidden>
+    <h2>Infinite sheet: the roll</h2>
+    <div class="toolbar">
+      <button id="roll-copy">Copy from the clearance above</button>
+      <span class="muted">Copies the gap and the four margins of the sheet stock into the roll.</span>
+    </div>
+    <div class="panel-body form">
+      <div class="row"><label>Gap between items, and between shelves (mm)</label><input type="number" min="0" step="any" data-setting="roll.gap"></div>
+      <div class="row"><label>Margin at the left edge (mm)</label><input type="number" min="0" step="any" data-setting="roll.left"></div>
+      <div class="row"><label>Margin at the right edge (mm)</label><input type="number" min="0" step="any" data-setting="roll.right"></div>
+      <div class="row"><label>Margin at the top of a shelf (mm)</label><input type="number" min="0" step="any" data-setting="roll.top"></div>
+      <div class="row"><label>Margin at the bottom of a shelf (mm)</label><input type="number" min="0" step="any" data-setting="roll.bottom"></div>
+      <div class="row"><label>Tallest shelf, before the top and bottom margins (mm)</label><input type="number" min="1" step="any" data-setting="roll.shelf_height"></div>
+      <p class="note" id="roll-sizes"></p>
+      <p class="note">The roll is cut into shelves, each a row across the full width of the roll, laid end to end. The width of a
+      shelf is the roll width less the left and right margins, and its height is at most the tallest shelf less the top and
+      bottom margins. Along the roll, shelves are separated by the gap, with one more gap at each end of the roll, so the
+      margins at the top and bottom of a shelf only limit how tall it can be. Each shelf is drawn as a sheet as wide as the
+      roll and as tall as the shelf plus the gap above and below, with the left and right margins at its sides. The gap and
+      all four margins must all be 0, or all be above 0. Give the width of the roll for each group. Items too wide or too
+      tall for the roll are left out and listed.</p>
+      <table class="grid" id="roll-widths"></table>
+    </div>
+  </div>
+
+  <div class="actions"><button class="primary" data-goto="run">Continue to run</button></div>
+</section>
+
+<!-- ============================ RUN ============================ -->
+<section id="tab-run" class="tab" hidden>
+
+  <div class="panel">
+    <h2>Start a run</h2>
+    <div class="panel-body">
+      <div class="row-inline"><label for="run-name">Name</label><input type="text" id="run-name" placeholder="Optional"></div>
+      <div id="run-summary" class="note"></div>
+      <div class="actions left">
+        <button class="primary" id="run-start">Start run</button>
+        <button id="run-cancel" hidden>Cancel run</button>
+      </div>
+      <div id="run-error" class="error-text"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-progress" hidden>
+    <h2>Progress</h2>
+    <div class="panel-body">
+      <table class="grid kv" id="progress-table"></table>
+      <div class="bar"><div id="progress-bar"></div></div>
+      <h3>Log</h3>
+      <pre id="run-log" class="log"></pre>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Earlier runs</h2>
+    <div class="table-wrap"><table class="grid" id="history-table"></table></div>
+  </div>
+
+</section>
+
+<!-- ============================ RESULTS ============================ -->
+<section id="tab-results" class="tab" hidden>
+  <div id="results-empty" class="panel"><div class="panel-body muted">No results yet. Start a run, or open an earlier run from the Run section.</div></div>
+  <div id="results-body" hidden>
+    <div class="panel">
+      <h2 id="results-title">Results</h2>
+      <div class="toolbar">
+        <span id="results-state" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="download-json">Download results (JSON)</button>
+        <button id="download-csv">Download cutting plan (CSV)</button>
+      </div>
+      <div id="results-warnings"></div>
+      <div class="toolbar" id="group-tabs"></div>
+    </div>
+    <div id="group-result"></div>
+  </div>
+</section>
+
+</main>
+
+<dialog id="roll-dialog">
+  <div class="dialog-head">
+    <b id="roll-dialog-title">The roll</b>
+    <span class="inline">
+      Zoom
+      <button id="roll-zoom-out" title="Zoom out">&minus;</button>
+      <button id="roll-zoom-in" title="Zoom in">+</button>
+      <button id="roll-dialog-close">Close</button>
+    </span>
+  </div>
+  <div class="dialog-body" id="roll-dialog-body"></div>
+</dialog>
+
+<dialog id="pattern-dialog">
+  <div class="dialog-head"><b id="dialog-title"></b><button id="dialog-close">Close</button></div>
+  <div class="dialog-body" id="dialog-body"></div>
+</dialog>
+
+<script src="/web/app.js"></script>
+</body>
+</html>
