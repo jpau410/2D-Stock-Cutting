@@ -808,7 +808,7 @@ function renderRollGroup(g) {
   holder.append(panel('Summary: ' + g.label,
     el('div', { class: 'toolbar' }, el('button', { class: 'primary', text: 'View the roll', onclick: () => openRoll(g) }),
       el('span', { class: 'muted', text: 'Opens a window you can scroll along the roll, with the shelves stacked as they are cut.' })),
-    el('div', { class: 'panel-body' }, kvTable([
+    el('div', { class: 'panel-body' }, limitNote(g), kvTable([
     ['Roll length needed', `${nf(g.roll_length / 1000, 2)} m (${nf(g.roll_length, 1)} mm) on a roll ${nf(g.roll_width, 1)} mm wide`],
     ['Shelves cut', `${nf(g.shelves_cut)} shelves of ${nf(g.shelves.length)} kinds`],
     ['Waste on the roll used', pct(w.waste_fraction)],

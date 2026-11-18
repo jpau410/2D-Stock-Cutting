@@ -89,8 +89,8 @@ using JuMP
 # If the LP solution is whole it is the plan. If not, the integer programme over
 # the shelves found is solved, which is not guaranteed to be the best over all
 # shelves, and the plan's gap to the bound is reported. That integer step is the
-# one the multi-period model takes, from no start and with no time
-# limit, except that its gap is its own setting, INFINITE_SHEET_IP_REL_GAP, apart
+# one the multi-period model takes, from no start and with the same
+# `ip_time_limit`, except that its gap is its own setting, INFINITE_SHEET_IP_REL_GAP, apart
 # from MIP_REL_GAP, because the length is a representative figure and not a plan
 # to cut (see src/constants.jl).
 #
@@ -443,28 +443,36 @@ end
 # --- The integer programme ---
 
 # Solves the model over `patterns` with whole shelf counts, the way the
-# multi-period model does its integer step: from no start and with no time
-# limit. Only the gap setting differs, INFINITE_SHEET_IP_REL_GAP in place of the
-# MIP_REL_GAP that new_selection_model sets. Fills `ip_stats` as
-# record_solve_stats! describes. Returns the solved model, or `nothing` if it did
-# not solve to optimality.
+# multi-period model does its integer step: from no start, and with the same
+# `ip_time_limit` (seconds; `Inf` for none). Only the gap setting differs,
+# INFINITE_SHEET_IP_REL_GAP in place of the MIP_REL_GAP that new_selection_model
+# sets. Fills `ip_stats` as record_solve_stats! describes. Returns the solved
+# model, or `nothing` if it did not end with a plan. A solve that runs out of
+# time keeps the best plan found so far, as the multi-period model does; only a
+# solve that ends with no plan at all gives `nothing`.
 function _solve_infinite_sheet_ip(
     instance      :: Instance,
     patterns      :: Vector{Pattern},
     shelf_lengths :: AbstractVector{<:Real},
     clearance     :: Real,
-    ip_stats      :: Dict{String, Any},
+    ip_stats      :: Dict{String, Any};
+    ip_time_limit :: Real = Inf,
 )
     ip = build_infinite_sheet_model(instance, patterns, shelf_lengths; clearance = clearance)
     set_optimizer_attribute(ip.model, "mip_rel_gap", INFINITE_SHEET_IP_REL_GAP)
+    isfinite(ip_time_limit) && set_time_limit_sec(ip.model, Float64(ip_time_limit))
     optimize!(ip.model)
     record_solve_stats!(ip_stats, ip.model, length(patterns))
 
-    if termination_status(ip.model) != MOI.OPTIMAL
-        @warn "The minimum-length integer programme did not solve to optimality: $(termination_status(ip.model))"
-        return nothing
+    status = termination_status(ip.model)
+    if status == MOI.OPTIMAL
+        return ip
+    elseif status == MOI.TIME_LIMIT && primal_status(ip.model) == MOI.FEASIBLE_POINT
+        @warn "The minimum-length integer programme reached its time limit; keeping the best plan found."
+        return ip
     end
-    return ip
+    @warn "The minimum-length integer programme did not end with a plan: $status"
+    return nothing
 end
 
 # --- From the master problem to the plan ---
@@ -488,7 +496,8 @@ function _infinite_sheet_plan(
     lp_seconds      :: Real,
     pricing_seconds :: Real,
     stats           :: Union{Nothing, Dict{String, Any}},
-    kind            :: Symbol,
+    kind            :: Symbol;
+    ip_time_limit   :: Real = Inf,
 )
     patterns      = pool.patterns
     shelf_heights = pool.heights ./ roll.scale
@@ -511,6 +520,7 @@ function _infinite_sheet_plan(
     # programme over the shelves held
     title     = kind == :full_pack ? "Infinite Sheet Full Pack" : "Infinite Sheet Column Generation"
     ip_stats  = Dict{String, Any}()
+    ip_status = nothing
     extracted = nothing
     if n_fractional == 0
         extracted  = _extract_infinite_sheet_solution(instance, patterns, shelf_heights, master, clearance; title = title)
@@ -518,7 +528,9 @@ function _infinite_sheet_plan(
         cost       = lp_value
         ip_value   = nothing
     else
-        ip         = _solve_infinite_sheet_ip(instance, patterns, shelf_heights, clearance, ip_stats)
+        ip         = _solve_infinite_sheet_ip(instance, patterns, shelf_heights, clearance, ip_stats;
+                                              ip_time_limit = ip_time_limit)
+        ip_status  = get(ip_stats, "termination_status", nothing)
         final_step = :ip
         if ip === nothing
             ip_value = nothing
@@ -544,7 +556,7 @@ function _infinite_sheet_plan(
         solution = extracted === nothing ? nothing : extracted.solution,
         patterns = patterns, shelf_heights = shelf_heights, cost = cost,
         lp_value = lp_value, lp_bound = lp_bound, lp_integral = n_fractional == 0, final_step = final_step,
-        ip_value = ip_value, ip_gap = ip_gap,
+        ip_value = ip_value, ip_gap = ip_gap, ip_status = ip_status,
         stop_reason = stop_reason, iterations = iterations, log = log,
         shelves_cut = extracted === nothing ? 0 : extracted.shelves_cut,
         waste = extracted === nothing ? no_waste : extracted.waste,
@@ -565,7 +577,7 @@ function _no_demand_result(n_original::Int, stats::Union{Nothing, Dict{String, A
     result = (
         solution = Solution(0.0, SelectedPattern[], zeros(Int, n_original)), patterns = Pattern[],
         shelf_heights = Float64[], cost = 0.0, lp_value = 0.0, lp_bound = 0.0, lp_integral = true,
-        final_step = :lp, ip_value = nothing, ip_gap = nothing, stop_reason = :optimal, iterations = 0,
+        final_step = :lp, ip_value = nothing, ip_gap = nothing, ip_status = nothing, stop_reason = :optimal, iterations = 0,
         log = NamedTuple[], shelves_cut = 0,
         waste = (roll_area = 0.0, waste_area = 0.0, waste_fraction = 0.0,
                  overproduced_units = 0, overproduced_value = 0.0, overproduced_area = 0.0),
@@ -583,7 +595,7 @@ end
                                  clearance_bottom = 0.0,
                                  speedups = RevisedSpeedups(),
                                  max_iterations = COLUMN_GENERATION_MAX_ITERATIONS,
-                                 time_limit = Inf,
+                                 time_limit = Inf, ip_time_limit = Inf,
                                  gap_tolerance = COLUMN_GENERATION_GAP_TOLERANCE,
                                  stats = nothing) -> NamedTuple
 
@@ -622,11 +634,12 @@ then printed, followed by its length against the lower bound.
 
 The integer programme, when one is needed, is the integer step of the
 multi-period model: the shelf counts over the shelves held, from no start and
-with no time limit. It is solved to its own gap, `INFINITE_SHEET_IP_REL_GAP`
-(src/constants.jl), apart from `MIP_REL_GAP`, because the length is a representative
-figure for the material a year's demand needs and not a plan to cut. A hard instance can still
-take a long time, and a solve that does not end with an optimal plan gives a
-`solution` of `nothing`.
+within `ip_time_limit` seconds (`Inf` for none), as in the multi-period model. It
+is solved to its own gap, `INFINITE_SHEET_IP_REL_GAP` (src/constants.jl), apart
+from `MIP_REL_GAP`, because the length is a representative figure for the
+material a year's demand needs and not a plan to cut. If the time limit is
+reached, the best plan found so far is kept and `ip_status` says so; a solve that
+ends with no plan at all gives a `solution` of `nothing`.
 
 If `stats` is a Dict, it is filled as `record_col_gen_stats!` describes, and
 with `shelves_cut`, `waste_fraction` and `overproduced_units`.
@@ -648,6 +661,8 @@ Returns a `NamedTuple`:
   - `final_step`  :: `:lp` or `:ip`, where `solution` came from
   - `ip_value`, `ip_gap` :: the integer programme's length and its gap above
     `lp_bound` as a share of the length; `nothing` if none was solved
+  - `ip_status`   :: the integer programme's termination status as a string
+    (`"OPTIMAL"`, `"TIME_LIMIT"`, ...); `nothing` if none was solved
   - `stop_reason` :: `:optimal`, `:gap`, `:iteration_limit`, `:time_limit` or
     `:stalled`
   - `iterations`  :: `Int`, the LP solves
@@ -674,10 +689,12 @@ function solve_col_gen_infinite_sheet(
     speedups         :: RevisedSpeedups = RevisedSpeedups(),
     max_iterations   :: Int  = COLUMN_GENERATION_MAX_ITERATIONS,
     time_limit       :: Real = Inf,
+    ip_time_limit    :: Real = Inf,
     gap_tolerance    :: Real = COLUMN_GENERATION_GAP_TOLERANCE,
     stats            :: Union{Nothing, Dict{String, Any}} = nothing,
 )
     max_iterations >= 1 || error("max_iterations must be at least 1, got $max_iterations")
+    ip_time_limit > 0 || throw(ArgumentError("the IP time limit must be above 0, got $ip_time_limit"))
     roll =_infinite_sheet_setup(instance, clearance, clearance_left, clearance_right,
                                  clearance_top, clearance_bottom, speedups)
     n_original = length(roll.original_items)
@@ -761,5 +778,6 @@ function solve_col_gen_infinite_sheet(
     end
 
     return _infinite_sheet_plan(instance, roll, pool, master, clearance, lp_value, lp_bound, stop_reason,
-                                iterations, log, lp_seconds, pricing_seconds, stats, :col_gen)
+                                iterations, log, lp_seconds, pricing_seconds, stats, :col_gen;
+                                ip_time_limit = ip_time_limit)
 end

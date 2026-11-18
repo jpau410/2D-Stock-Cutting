@@ -359,15 +359,16 @@ function solve_roll_group(job_dir::String, data, group::Group, settings; group_n
         clearance_keywords(roll_clearance)...,
         max_iterations = settings.max_iterations,
         time_limit = settings.col_gen_time_limit,
+        ip_time_limit = settings.ip_time_limit,
     )
     out["solver"] = Dict{String, Any}(
         "seconds" => time() - started, "iterations" => result.iterations, "stop_reason" => String(result.stop_reason),
         "patterns_generated" => length(result.patterns), "lp_value" => result.lp_value, "lp_bound" => result.lp_bound, "ip_gap" => result.ip_gap,
-        "final_step" => String(result.final_step),
+        "ip_status" => result.ip_status, "final_step" => String(result.final_step),
     )
     if result.solution === nothing
         out["status"] = "no_plan"
-        out["message"] = "The integer programme did not finish with a plan."
+        out["message"] = "The integer programme did not finish with a plan. Try a longer time limit."
         return out
     end
 
